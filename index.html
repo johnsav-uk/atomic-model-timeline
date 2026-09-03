@@ -362,7 +362,7 @@ body.present .stage-note{display:none}
           <button class="seg-btn" data-view="flat" type="button">2D diagram</button>
           <button class="seg-btn" data-view="scatter" type="button">Alpha scattering</button>
         </div>
-        <button class="btn sm" id="spinBtn">Pause rotation</button>
+        <button class="btn sm" id="spinBtn">Pause motion</button>
         <button class="btn sm" id="ppBtn" style="display:none">Plum pudding prediction</button>
         <button class="btn sm" id="slowBtn" style="display:none">Slow motion</button>
         <button class="btn sm" id="restartBtn" style="display:none">Restart</button>
@@ -595,7 +595,7 @@ const DATA = [
       ms:'"Most alpha particles passed straight through, so the atom is mostly empty space; a small number were deflected, so the nucleus is positively charged; a very small number were deflected by more than 90°, so the mass of the atom is concentrated in a very small nucleus."'
     },
     legend:[['#ff5f6d','Nucleus (+, holds the mass)'],['#4da6ff','Electron (−)'],['#3b5570','Empty space']],
-    cam:[0,2.6,12.2]
+    cam:[0,3,15]
   },
 
   {
@@ -651,7 +651,7 @@ const DATA = [
       ms:'"Bohr adapted the nuclear model by suggesting electrons orbit the nucleus at specific distances / in fixed energy levels, and his theoretical calculations agreed with experimental observations."'
     },
     legend:[['#ff5f6d','Nucleus (protons +)'],['#4da6ff','Electrons in fixed shells'],['#3ddcff','Energy level n = 1, 2, 3']],
-    cam:[0,3,13.4]
+    cam:[0,4,20]
   },
 
   {
@@ -711,7 +711,7 @@ const DATA = [
       ms:'"The experimental work of James Chadwick provided evidence for the existence of neutrons within the nucleus, about 20 years after the nucleus became an accepted idea."'
     },
     legend:[['#ff5f6d','Proton (+1, mass 1)'],['#9fb0c2','Neutron (0, mass 1)'],['#4da6ff','Electron (−1, tiny mass)']],
-    cam:[0,3,13.4]
+    cam:[0,3.6,17.5]
   }
 ];
 
@@ -741,7 +741,7 @@ let sScene, sCamera, sControls;     // alpha-scattering view
 let currentGroup = null, outgoingGroup = null;
 let fadeIn = 1, fadeOut = 0;
 let camTween = null;
-let spinAngle = 0, spin = true;
+let spinAngle = 0, spin = true, animTime = 0;
 let idx = 0, mode = 'model';
 let LABEL_SCALE = 1;
 
@@ -917,6 +917,20 @@ function applyLabelScale(root, k){
     if(b) o.scale.set(b[0]*k, b[1]*k, 1);
   });
 }
+/* Labels hold a constant size on screen: scaling each one by its distance from
+   the camera means they stay readable whether the atom is framed whole or you
+   have zoomed right into the nucleus.                                        */
+const LABEL_REF = 12, _lv = new THREE.Vector3();
+function updateLabelSizes(root, cam){
+  if(!root) return;
+  root.traverse(o=>{
+    const b = o.userData && o.userData.baseScale;
+    if(!b) return;
+    o.getWorldPosition(_lv);
+    const k = LABEL_SCALE * Math.max(.2, Math.min(2.6, _lv.distanceTo(cam.position) / LABEL_REF));
+    o.scale.set(b[0]*k, b[1]*k, 1);
+  });
+}
 function labelAt(text, x, y, z, color, scale){ const s = label(text,color,scale); s.position.set(x,y,z); return s; }
 
 function ringLine(radius, color, opacity, tiltX, tiltZ){
@@ -948,6 +962,10 @@ function packPoints(n, radius, minDist){
    3. Model builders — one per timeline node
    ===================================================================== */
 const BUILDERS = {};
+/* Bohr and Chadwick put every shell in one shared plane, like planets round
+   a star. Tilting that plane towards the camera keeps it readable as a set of
+   concentric circles rather than collapsing to a line edge-on.              */
+const PLANE_TILT = 0.34;
 
 /* --- Democritus: one solid, featureless, indivisible sphere --------- */
 BUILDERS.democritus = () => {
@@ -1035,12 +1053,12 @@ BUILDERS.rutherford = () => {
   const nuc = new THREE.Group();
   const pMat = makeMaterial({ color:0xffffff, map:chargeTex('p'), emissiveMap:chargeTex('p'),
                               emissive:0x7a1420, emissiveIntensity:.5, roughness:.35 });
-  packPoints(6, .33, .24).forEach(p=>{ const m = ball(.20, 28, pMat); m.position.copy(p); nuc.add(m); });
-  nuc.add(glowSprite(COL.pos, 3.4, .45));
-  g.add(nuc, labelAt('Nucleus — 6 protons (+), tiny but holds the mass', 0, 1.15, 0, '#ffb3b9'));
+  packPoints(6, .20, .145).forEach(p=>{ const m = ball(.12, 28, pMat); m.position.copy(p); nuc.add(m); });
+  nuc.add(glowSprite(COL.pos, 1.5, .5));
+  g.add(nuc, labelAt('Nucleus — 6 protons (+), tiny but holds the mass', 0, .95, 0, '#ffb3b9', .85));
 
   /* boundary of the atom: mostly empty space */
-  const R = 3.7;
+  const R = 4.6;
   g.add(new THREE.Mesh(new THREE.SphereGeometry(R, 30, 20),
         basicMat({ color:0x4f7ba6, wireframe:true, opacity:.055 })));
   g.add(labelAt('Mostly empty space', 0, -R - .7, 0, '#8ea4bd'));
@@ -1050,16 +1068,16 @@ BUILDERS.rutherford = () => {
   const eMat = makeMaterial({ color:0xffffff, map:chargeTex('e'), emissiveMap:chargeTex('e'),
                               emissive:0x2a6fb5, emissiveIntensity:.8, roughness:.3 });
   const orbits = [
-    { r:2.6, tx: .35, tz: .25, sp:.75, ph:0 },
-    { r:3.1, tx:-1.1, tz: .45, sp:.55, ph:2.1 },
-    { r:3.4, tx: 1.25, tz:-.6, sp:.42, ph:4.3 }
+    { r:3.2, tx: .35, tz: .25, sp:.75, ph:0 },
+    { r:3.9, tx:-1.1, tz: .45, sp:.55, ph:2.1 },
+    { r:4.3, tx: 1.25, tz:-.6, sp:.42, ph:4.3 }
   ];
   const els = [];
   orbits.forEach(o=>{
     g.add(ringLine(o.r, 0x2f6f9c, .16, o.tx, o.tz));
     for(let k=0;k<2;k++){                 /* 2 per path = 6 electrons, matching 6 protons */
-      const e = ball(.30, 32, eMat);
-      e.add(glowSprite(COL.neg, 1.4, .4));
+      const e = ball(.15, 24, eMat);
+      e.add(glowSprite(COL.neg, .8, .5));
       g.add(e);
       els.push({ mesh:e, o, ph:o.ph + k*Math.PI });
     }
@@ -1084,46 +1102,52 @@ BUILDERS.rutherford = () => {
 /* --- Bohr: electrons in fixed shells at specific distances --------- */
 BUILDERS.bohr = () => {
   const g = new THREE.Group();
+  /* All shells share ONE plane — the "planetary" arrangement, and the same
+     picture as the 2D exam diagram seen at an angle. `sys` carries the tilt
+     and the spin; labels stay outside it so they don't swing round with it. */
+  const sys = new THREE.Group();
+  g.add(sys);
+
   const nuc = new THREE.Group();
   const pMat = makeMaterial({ color:0xffffff, map:chargeTex('p'), emissiveMap:chargeTex('p'),
                               emissive:0x7a1420, emissiveIntensity:.5, roughness:.35 });
-  packPoints(6, .36, .26).forEach(p=>{ const m = ball(.22, 28, pMat); m.position.copy(p); nuc.add(m); });
-  nuc.add(glowSprite(COL.pos, 3.0, .4));
-  g.add(nuc, labelAt('Nucleus — 6 protons (+)', 0, -1.32, 0, '#ffb3b9'));
+  packPoints(6, .18, .13).forEach(p=>{ const m = ball(.11, 28, pMat); m.position.copy(p); nuc.add(m); });
+  nuc.add(glowSprite(COL.pos, 1.3, .45));
+  sys.add(nuc);
+  g.add(labelAt('Nucleus — 6 protons (+)  ·  zoom in to see them', 0, -.62, 0, '#ffb3b9', .82));
 
   const eMat = makeMaterial({ color:0xffffff, map:chargeTex('e'), emissiveMap:chargeTex('e'),
                               emissive:0x2a6fb5, emissiveIntensity:.85, roughness:.25 });
   const shells = [
-    { r:1.7, n:2, tx: .28, sp: .95, name:'n = 1  (2 electrons)' },
-    { r:2.8, n:4, tx:-.42, sp: .62, name:'n = 2  (4 electrons)' },
-    { r:3.9, n:0, tx: .70, sp: .44, name:'n = 3  (empty in carbon)' }
+    { r:2.6, n:2, sp: .95, name:'n = 1  (2 electrons)' },
+    { r:4.0, n:4, sp: .62, name:'n = 2  (4 electrons)' },
+    { r:5.4, n:0, sp: .44, name:'n = 3  (empty in carbon)' }
   ];
   const els = [];
   shells.forEach((s,si)=>{
-    g.add(ringLine(s.r, 0x3ddcff, s.n ? .28 : .12, s.tx, si*0.22));
-    g.add(new THREE.Mesh(new THREE.SphereGeometry(s.r, 26, 18),
-          basicMat({ color:0x3ddcff, wireframe:true, opacity:.035 })));
-    const lb = labelAt(s.name, 0, s.r*Math.cos(s.tx) + .38, 0, '#a8e4ff');
+    sys.add(ringLine(s.r, 0x3ddcff, s.n ? .3 : .13, 0, 0));
+    sys.add(new THREE.Mesh(new THREE.SphereGeometry(s.r, 26, 18),
+            basicMat({ color:0x3ddcff, wireframe:true, opacity:.025 })));
+    const lb = labelAt(s.name, 0, 0, 0, '#a8e4ff', .9);
     lb.position.set(-s.r*0.72, s.r*0.72, 0);
     g.add(lb);
     for(let i=0;i<s.n;i++){
-      const e = ball(.24, 28, eMat);
-      e.add(glowSprite(COL.neg, 1.15, .4));
-      g.add(e);
-      els.push({ mesh:e, s, ph: i/s.n * Math.PI*2, si });
+      const e = ball(.15, 24, eMat);
+      e.add(glowSprite(COL.neg, .8, .5));
+      sys.add(e);
+      els.push({ mesh:e, s, ph: i/s.n * Math.PI*2 });
     }
   });
-  g.add(labelAt('Electrons orbit at specific distances', 0, -4.7, 0, '#8ea4bd'));
-  g.add(labelAt('Carbon · 6 protons, 6 electrons · 2,4', 0, -5.35, 0, '#7f93a9', .9));
+  g.add(labelAt('Electrons orbit at specific distances', 0, -6.3, 0, '#8ea4bd'));
+  g.add(labelAt('Carbon · 6 protons, 6 electrons · 2,4', 0, -7.2, 0, '#7f93a9', .9));
+  g.add(labelAt('Still not to scale — a real nucleus is ~10 000× smaller than the atom',
+                0, -8.05, 0, '#5f7b96', .78));
 
   g.userData.update = (t) => {
-    g.rotation.y = spinAngle * .45;
+    sys.rotation.set(PLANE_TILT, spinAngle * .45, 0);
     els.forEach(e=>{
       const a = t*e.s.sp + e.ph;
-      const v = new THREE.Vector3(Math.cos(a)*e.s.r, 0, Math.sin(a)*e.s.r);
-      v.applyAxisAngle(new THREE.Vector3(1,0,0), e.s.tx);
-      v.applyAxisAngle(new THREE.Vector3(0,0,1), e.si*0.22);
-      e.mesh.position.copy(v);
+      e.mesh.position.set(Math.cos(a)*e.s.r, 0, Math.sin(a)*e.s.r);
     });
   };
   return g;
@@ -1132,49 +1156,51 @@ BUILDERS.bohr = () => {
 /* --- Chadwick: protons + neutrons in the nucleus (carbon-12) ------- */
 BUILDERS.chadwick = () => {
   const g = new THREE.Group();
+  const sys = new THREE.Group();      /* one shared orbital plane, as in Bohr */
+  g.add(sys);
+
   const nuc = new THREE.Group();
   const pMat = makeMaterial({ color:0xffffff, map:chargeTex('p'), emissiveMap:chargeTex('p'),
                               emissive:0x7a1420, emissiveIntensity:.4, roughness:.4 });
   const nMat = makeMaterial({ color:0x9fb0c2, emissive:0x2c3a49, emissiveIntensity:.45, roughness:.5 });
-  const pts = packPoints(12, .66, .42);
+  const pts = packPoints(12, .34, .215);
   pts.forEach((p,i)=>{
-    const m = ball(.29, 32, i % 2 ? nMat : pMat);
+    const m = ball(.15, 28, i % 2 ? nMat : pMat);
     m.position.copy(p); nuc.add(m);
   });
-  nuc.add(glowSprite(COL.pos, 3.2, .28));
-  g.add(nuc);
-  g.add(labelAt('6 protons + 6 neutrons', 0, 1.5, 0, '#ffc9ce'));
+  nuc.add(glowSprite(COL.pos, 1.7, .3));
+  sys.add(nuc);
+  g.add(labelAt('Nucleus — 6 protons + 6 neutrons  ·  zoom in', 0, -.78, 0, '#ffc9ce', .82));
 
   const eMat = makeMaterial({ color:0xffffff, map:chargeTex('e'), emissiveMap:chargeTex('e'),
                               emissive:0x2a6fb5, emissiveIntensity:.85, roughness:.25 });
-  const shells = [ { r:2.2, n:2, tx:.3, sp:.9 }, { r:3.5, n:4, tx:-.5, sp:.55 } ];
+  const shells = [ { r:3.0, n:2, sp:.9 }, { r:4.8, n:4, sp:.55 } ];
   const els = [];
-  shells.forEach((s,si)=>{
-    g.add(ringLine(s.r, 0x3ddcff, .26, s.tx, si*0.3));
+  shells.forEach(s=>{
+    sys.add(ringLine(s.r, 0x3ddcff, .28, 0, 0));
     for(let i=0;i<s.n;i++){
-      const e = ball(.26, 28, eMat);
-      e.add(glowSprite(COL.neg, 1.15, .4));
-      g.add(e);
-      els.push({ mesh:e, s, ph:i/s.n*Math.PI*2, si });
+      const e = ball(.15, 24, eMat);
+      e.add(glowSprite(COL.neg, .8, .5));
+      sys.add(e);
+      els.push({ mesh:e, s, ph:i/s.n*Math.PI*2 });
     }
   });
-  g.add(labelAt('Carbon-12 · electronic structure 2,4', 0, -4.4, 0, '#8ea4bd'));
+  g.add(labelAt('Carbon-12 · electronic structure 2,4', 0, -5.9, 0, '#8ea4bd'));
+  g.add(labelAt('Still not to scale — a real nucleus is ~10 000× smaller than the atom',
+                0, -6.8, 0, '#5f7b96', .78));
 
   g.userData.update = (t) => {
-    g.rotation.y = spinAngle * .45;
+    sys.rotation.set(PLANE_TILT, spinAngle * .45, 0);
     nuc.rotation.y = -spinAngle * .25;
     nuc.children.forEach((m,i)=>{
       if(!m.isMesh) return;
       const b = pts[i]; if(!b) return;
       const w = t*1.4 + i;
-      m.position.set(b.x + Math.sin(w)*.035, b.y + Math.cos(w*1.1)*.035, b.z + Math.sin(w*.9)*.035);
+      m.position.set(b.x + Math.sin(w)*.018, b.y + Math.cos(w*1.1)*.018, b.z + Math.sin(w*.9)*.018);
     });
     els.forEach(e=>{
       const a = t*e.s.sp + e.ph;
-      const v = new THREE.Vector3(Math.cos(a)*e.s.r, 0, Math.sin(a)*e.s.r);
-      v.applyAxisAngle(new THREE.Vector3(1,0,0), e.s.tx);
-      v.applyAxisAngle(new THREE.Vector3(0,0,1), e.si*0.3);
-      e.mesh.position.copy(v);
+      e.mesh.position.set(Math.cos(a)*e.s.r, 0, Math.sin(a)*e.s.r);
     });
   };
   return g;
@@ -1463,7 +1489,7 @@ function initThree(){
 
   controls = new THREE.OrbitControls(camera, canvas);
   controls.enableDamping = true; controls.dampingFactor = .07;
-  controls.minDistance = 4; controls.maxDistance = 30;
+  controls.minDistance = 0.9; controls.maxDistance = 48;
 
   buildScatterScene();
   sControls = new THREE.OrbitControls(sCamera, canvas);
@@ -1515,8 +1541,9 @@ function buildModel(i, instant){
 
 function tick(){
   const dt = Math.min(clock.getDelta(), .05);
-  const t  = clock.elapsedTime;
-  if(spin) spinAngle += dt * .18;
+  /* animTime freezes with the pause button, so ALL motion stops, not just the spin */
+  if(spin){ spinAngle += dt * .18; animTime += dt; }
+  const t = animTime;
 
   if(mode === 'model'){
     if(camTween){
@@ -1542,6 +1569,7 @@ function tick(){
       }
     }
     if(currentGroup && currentGroup.userData.update) currentGroup.userData.update(t, dt);
+    updateLabelSizes(currentGroup, camera);
     controls.update();
     renderer.render(scene, camera);
   } else if(mode === 'scatter'){
@@ -1648,7 +1676,7 @@ FLAT.thomson = () => {
   ${txt(474, 100, 'ball of positive charge', 'lbl')}
   ${lead(F.cx-42, F.cy+84, 74, 424)}
   ${txt(70, 441, 'electron, embedded (–)', 'lbl')}
-  ${txt(F.cx, 448, '6 electrons · the atom is neutral overall', 'dim', 'middle')}
+  ${txt(F.cx, 492, '6 electrons · the atom is neutral overall', 'dim', 'middle')}
   ${notes(548, 175, 'WHAT THE MODEL SAYS', ['A ball of positive charge','Negative electrons embedded in it',
      'Charge spread evenly through it','Mass spread through the whole atom'])}
   ${notes(548, 350, 'DO NOT DRAW', ['Shells','Orbits','A nucleus'])}`;
@@ -1995,8 +2023,8 @@ function bindUI(){
     });
   });
   $('spinBtn').addEventListener('click', e=>{
-    spin = !spin;
-    e.target.textContent = spin ? 'Pause rotation' : 'Resume rotation';
+    spin = !spin;                       /* freezes the whole model, orbits included */
+    e.target.textContent = spin ? 'Pause motion' : 'Resume motion';
     e.target.classList.toggle('on', !spin);
   });
   $('ppBtn').addEventListener('click', ()=> setPrediction(!SC.pp));
